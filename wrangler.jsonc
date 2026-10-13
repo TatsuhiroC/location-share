@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "location-share",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": true },
+  "durable_objects": {
+    "bindings": [
+      { "name": "SESSIONS", "class_name": "LocationSession" },
+      { "name": "ADMISSION", "class_name": "Admission" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LocationSession", "Admission"] }],
+  "observability": { "enabled": false }
+}
