@@ -103,3 +103,17 @@ test('authentication failures do not charge a record quota; delete works after r
   await execute(storage, 'delete', view, null, now);
   assert.equal(await storage.get('record'), undefined);
 });
+
+test('authenticated invalid submissions consume the record budget and cannot bypass it by failing validation', async () => {
+  const storage = await fixture();
+  for (let i = 0; i < 8; i++) await assert.rejects(execute(storage, 'submit', submit, { ...position(), latitude: 91 }, now), { status: 400 });
+  await assert.rejects(execute(storage, 'submit', submit, position(), now), { status: 429 });
+  assert.equal((await storage.get('record')).position, null);
+  await execute(storage, 'delete', view, null, now);
+  assert.equal(await storage.get('record'), undefined);
+});
+
+test('spoofing with bidirectional formatting controls is rejected in initiator names', () => {
+  for (const control of ['\u202e', '\u2066', '\u0085']) assert.throws(() => metadata({ initiator: '某人' + control + 'abc' }), { status: 400 });
+  assert.equal(metadata({ initiator: '陈 / محمد' }).initiator, '陈 / محمد');
+});

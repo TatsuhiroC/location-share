@@ -332,3 +332,35 @@ test('without WebGL, the basic map still displays position and precision', async
   await expect(page.locator('#position-precision')).toContainText('10 米');
   await expect(page.locator('#map-note')).toContainText('基础地图');
 });
+
+test('forged links cannot overwrite a valid cached view permission in the same tab', async ({ page, request }) => {
+  const data = await create(request);
+  await page.goto(link(data, 'view'));
+  await expect(page.locator('#view-status')).toHaveText('等待对方分享');
+  await page.goto(`/#view/${data.id}/${'f'.repeat(64)}`);
+  await expect(page.getByRole('heading', { name: '这个链接暂时无法使用' })).toBeVisible();
+  await page.goto(`/#view/${data.id}`);
+  await expect(page.locator('#view-status')).toHaveText('等待对方分享');
+});
+
+test('static pages keep security headers when bypassing the Worker', async ({ request }) => {
+  const response = await request.get('/');
+  expect(response.status()).toBe(200);
+  expect(response.headers()['content-security-policy']).toContain("script-src 'self'");
+  expect(response.headers()['x-frame-options']).toBe('DENY');
+  expect(response.headers()['referrer-policy']).toBe('strict-origin-when-cross-origin');
+  expect(response.headers()['cache-control']).toContain('no-cache');
+});
+
+test('valid polar coordinates do not crash the Web Mercator map or hide the received location', async ({ page, request }) => {
+  const data = await create(request);
+  const response = await request.post(`/api/requests/${data.id}/location`, { headers: auth(data.submitToken), data: { latitude: 90, longitude: 0, accuracy: 10, timestamp: Date.now(), consent: true, submissionId: 'c'.repeat(32) } });
+  expect(response.status()).toBe(200);
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto(link(data, 'view'));
+  await expect(page.locator('#position-map')).toHaveAttribute('data-basemap', 'unsupported');
+  await expect(page.locator('#position-map')).toContainText('超出网页地图的显示范围');
+  await expect(page.locator('#latitude')).toHaveText('90.000000');
+  await expect(page.locator('#google-link')).toHaveAttribute('href', /query=90%2C0/);
+  expect(errors).toEqual([]);
+});

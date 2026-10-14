@@ -8,7 +8,7 @@ export default defineConfig({
   timeout: 30000,
   use: { baseURL, trace: 'retain-on-failure' },
   webServer: {
-    command: 'node scripts/test-server.js',
+    command: 'node scripts/local-server.js --test',
     url: `${baseURL}/api/health`,
     reuseExistingServer: false,
     timeout: 60000,

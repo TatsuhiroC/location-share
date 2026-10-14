@@ -7,6 +7,7 @@ const API_ERRORS = {
   UNAUTHORIZED: '链接的访问权限不正确，请重新打开完整的原始链接。',
   ALREADY_RECEIVED: '这个链接已经收到一次位置，无法再次提交。',
   INVALID_LOCATION: '定位结果不完整或已超过五分钟，请重新获取位置。',
+  REQUEST_TIMEOUT: '请求传输超时，请检查网络后重试。',
   RATE_LIMITED: '请求较多，已达到服务的访问额度，请稍后再试。',
   INVALID_REQUEST: '请检查填写内容和链接。',
   SERVICE_UNAVAILABLE: '服务暂时不可用，请稍后重试。',
@@ -70,6 +71,14 @@ function savePermission(role, id, token) {
 function cachedPermission(role, id) {
   try { return sessionStorage.getItem(`permission:${role}:${id}`); } catch { return null; }
 }
+function rememberPermission(role, id, token) {
+  savePermission(role, id, token);
+  if (cachedPermission(role, id) === token) history.replaceState(null, '', `${location.pathname}#${role}/${id}`);
+}
+function forgetRequest(id) {
+  for (const role of ['share', 'view']) { try { sessionStorage.removeItem(`permission:${role}:${id}`); } catch {} }
+  if (activeShare?.id === id) activeShare = null;
+}
 async function copy(value, outputId, inputId) {
   try { await navigator.clipboard.writeText(value); message(outputId, '已复制。'); }
   catch {
@@ -94,7 +103,7 @@ function home() {
   shell(`<div class="home-layout"><section class="intro"><div class="eyebrow">A LITTLE CLOSER</div><h1>告诉我，<br><span class="accent">你在这里。</span></h1><p class="lead">把链接或二维码发给对方。<br>对方允许后，在这里看到一次当前位置。</p>
     <div class="steps"><div class="step"><span>01 / CREATE</span><strong>生成链接</strong></div><div class="arrow">→</div><div class="step"><span>02 / ALLOW</span><strong>对方允许</strong></div><div class="arrow">→</div><div class="step"><span>03 / RECEIVE</span><strong>看到位置</strong></div></div>
     <p class="small-note">无需安装应用。链接 1 小时有效，只分享一次位置。</p></section>
-    <section class="card"><div class="card-top">NEW LOCATION REQUEST <span class="pill">v0.3.2</span></div><h2>生成临时分享链接</h2><p class="card-sub">填个名字，方便对方知道是谁发起的。也可以留空。</p>
+    <section class="card"><div class="card-top">NEW LOCATION REQUEST <span class="pill">v0.4</span></div><h2>生成临时分享链接</h2><p class="card-sub">填个名字，方便对方知道是谁发起的。也可以留空。</p>
     <form id="create-form"><div class="field"><label for="initiator">分享发起人 <span class="hint">可选</span></label><input id="initiator" name="initiator" maxlength="60" autocomplete="name" placeholder="例如：小陈"></div>
     <div id="create-error" role="alert" hidden></div><button id="create-button" class="primary full" type="submit">生成临时链接 <span aria-hidden="true">↗</span></button>
     <p class="form-foot">生成链接不会获取你自己的位置。</p></form></section></div>`);
@@ -140,6 +149,7 @@ function shareTools(id, token, initiator) {
 async function sharePage(id, token, version) {
   const info = await api(`/requests/${id}/info`, { token });
   if (navigation !== version) return;
+  rememberPermission('share', id, token);
   if (info.status === 'received') {
     shell(`<section class="page-heading"><div class="eyebrow">ONCE IS ENOUGH</div><h1>这个链接已经使用过</h1></section><section class="card center-card center"><div class="status-orbit"><span>✓</span></div><p class="status-copy">位置已分享过一次，无需重复发送。</p><a class="secondary" href="/">回到首页</a></section>`); return;
   }
@@ -147,7 +157,7 @@ async function sharePage(id, token, version) {
   dispose = () => { operation++; pending = null; el('accuracy-dialog')?.close(); };
   shell(`<section class="page-heading"><div class="eyebrow">YOUR LOCATION, YOUR CHOICE</div><h1>分享一次当前位置</h1><p id="share-invitation"></p></section><section class="card center-card">
     <dl class="metadata"><dt>发起人</dt><dd id="share-initiator"></dd><dt>过期时间</dt><dd id="share-expiry"></dd></dl>
-    <div class="consent-text">允许后，将向发起人发送一次当前位置、精度和时间，并通过基于 OpenStreetMap 的地图展示。记录在链接过期后删除。</div>
+    <p class="privacy-copy">发起人名称由对方填写，未经身份验证，请确认链接来源。</p><div class="consent-text">允许后，将向发起人发送一次当前位置、精度和时间，并通过基于 OpenStreetMap 的地图展示。记录在链接过期后删除。</div>
     <div id="share-feedback" role="status" class="message"></div><div id="share-error" role="alert" hidden></div>
     <button id="allow-share" class="primary full">允许分享当前位置 ↗</button>
     <div class="center"><button id="cancel-location" class="cancel-button" hidden>取消获取位置</button></div>
@@ -228,7 +238,7 @@ async function sharePage(id, token, version) {
 
 async function viewPage(id, token, version) {
   let timer = null, busy = false, ended = false;
-  let latest = null, removeMap = () => {}, mapShown = false, toolsShown = false;
+  let latest = null, removeMap = () => {}, mapShown = false, toolsShown = false, remembered = false;
   const shareToken = activeShare?.id === id ? activeShare.token : cachedPermission('share', id);
   const privateLink = sharingUrl('view', id, token);
   dispose = () => { ended = true; clearTimeout(timer); removeMap(); document.removeEventListener('visibilitychange', visible); };
@@ -276,10 +286,14 @@ async function viewPage(id, token, version) {
     try {
       const data = await api(`/requests/${id}`, { token });
       if (navigation !== version || ended) return;
+      if (!remembered) { rememberPermission('view', id, token); remembered = true; }
       display(data); message('view-error', '');
     } catch (error) {
       if (navigation !== version || ended) return;
-      if (['NOT_FOUND', 'EXPIRED', 'UNAUTHORIZED'].includes(error.code)) { dispose(); fatal(error); return; }
+      if (['NOT_FOUND', 'EXPIRED', 'UNAUTHORIZED'].includes(error.code)) {
+        if (error.code !== 'UNAUTHORIZED') forgetRequest(id);
+        dispose(); fatal(error); return;
+      }
       message('view-error', error.message, true);
     } finally {
       busy = false;
@@ -300,7 +314,7 @@ async function viewPage(id, token, version) {
     try {
       await api(`/requests/${id}`, { method: 'DELETE', token });
       if (navigation !== version) return;
-      dispose();
+      dispose(); forgetRequest(id);
       shell(`<section class="page-heading"><div class="eyebrow">ALL DONE</div><h1>请求已删除</h1></section><section class="card center-card center"><p class="status-copy">应用中的位置记录已删除，所有链接已失效。</p><a class="primary" href="/">创建新请求</a></section>`);
     } catch (error) {
       if (navigation !== version || ended) return;
@@ -315,21 +329,18 @@ async function route() {
   const version = ++navigation;
   const fragment = location.hash.slice(1);
   if (!fragment) { home(); return; }
-  // Old private creator bookmarks now open the simplified public home.
-  if (/^admin\/[a-f0-9]{64}$/.test(fragment)) { history.replaceState(null, '', location.pathname); home(); return; }
-  const match = /^(share|view)\/([a-f0-9]{32})(?:\/([a-f0-9]{64}))?$/.exec(fragment);
+  const match = /^(share|view)\/([a-f0-9]{32})(?:\/((?:s)?[a-f0-9]{64}))?$/.exec(fragment);
   if (!match) { fatal(new Error('链接不完整，请重新打开原始链接。')); return; }
   const [, role, id, originalToken] = match;
   const token = originalToken || cachedPermission(role, id);
   if (!token) { fatal(new Error('请重新打开包含访问权限的完整原始链接。')); return; }
-  if (originalToken) {
-    savePermission(role, id, token);
-    // Keep reload working when browser storage is unavailable.
-    if (cachedPermission(role, id) === token) history.replaceState(null, '', `${location.pathname}#${role}/${id}`);
-  }
   shell('<div class="loading" role="status">正在打开…</div>'); app.setAttribute('aria-busy', 'true');
   try { await (role === 'share' ? sharePage(id, token, version) : viewPage(id, token, version)); }
-  catch (error) { if (navigation === version) fatal(error); }
+  catch (error) {
+    if (navigation !== version) return;
+    if (['NOT_FOUND', 'EXPIRED'].includes(error.code)) forgetRequest(id);
+    fatal(error);
+  }
 }
 
 window.addEventListener('hashchange', route);

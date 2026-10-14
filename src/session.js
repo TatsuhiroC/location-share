@@ -1,5 +1,6 @@
 export const HOUR = 60 * 60 * 1000;
 export const TOKEN_RE = /^[a-f0-9]{64}$/;
+export const CAPABILITY_RE = /^(?:s[a-f0-9]{64}|[a-f0-9]{64})$/;
 export const ID_RE = /^[a-f0-9]{32}$/;
 
 export class ApiError extends Error {
@@ -26,7 +27,7 @@ export function metadata(body) {
   const value = body.initiator ?? '';
   if (typeof value !== 'string') throw new ApiError(400, 'INVALID_REQUEST');
   const initiator = value.trim();
-  if (initiator.length > 60 || /[\u0000-\u001f\u007f]/u.test(initiator)) throw new ApiError(400, 'INVALID_REQUEST');
+  if (initiator.length > 60 || /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(initiator)) throw new ApiError(400, 'INVALID_REQUEST');
   return { initiator };
 }
 
@@ -44,6 +45,7 @@ export function validatePosition(body, now) {
 
 // Runs against Durable Object storage. Transactions serialize competing submissions/deletion.
 export async function execute(storage, action, token, body, now = Date.now()) {
+  if (!['read', 'info', 'submit', 'delete'].includes(action)) throw new ApiError(400, 'INVALID_REQUEST');
   return storage.transaction(async tx => {
     const record = await tx.get('record');
     if (!record) return { error: { status: 404, code: 'NOT_FOUND' } };
@@ -51,7 +53,7 @@ export async function execute(storage, action, token, body, now = Date.now()) {
       await tx.delete('record');
       return { error: { status: 410, code: 'EXPIRED' } };
     }
-    if (!TOKEN_RE.test(token || '')) throw new ApiError(401, 'UNAUTHORIZED');
+    if (!CAPABILITY_RE.test(token || '')) throw new ApiError(401, 'UNAUTHORIZED');
     const role = action === 'info' || action === 'submit' ? 'submitHash' : 'viewHash';
     if (!equal(await digest(token), record[role])) throw new ApiError(401, 'UNAUTHORIZED');
     // Only authenticated requests can consume this record's budget. Deletion stays available.
@@ -71,11 +73,19 @@ export async function execute(storage, action, token, body, now = Date.now()) {
       return { value: { ...common, position } };
     }
     if (action === 'delete') { await tx.delete('record'); return { value: { deleted: true } }; }
-    if (action !== 'submit') throw new ApiError(400, 'INVALID_REQUEST');
-    const position = validatePosition(body, now);
+    let position;
+    try { position = validatePosition(body, now); }
+    catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+      await tx.put('record', record);
+      return { error: { status: error.status, code: error.code } };
+    }
     if (record.position) {
       const old = record.position;
-      if (old.submissionId !== position.submissionId || ['latitude', 'longitude', 'accuracy', 'timestamp'].some(key => old[key] !== position[key])) throw new ApiError(409, 'ALREADY_RECEIVED');
+      if (old.submissionId !== position.submissionId || ['latitude', 'longitude', 'accuracy', 'timestamp'].some(key => old[key] !== position[key])) {
+        await tx.put('record', record);
+        return { error: { status: 409, code: 'ALREADY_RECEIVED' } };
+      }
       await tx.put('record', record);
       return { value: { received: true, receivedAt: old.receivedAt } };
     }

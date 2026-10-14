@@ -1,16 +1,21 @@
 {
   "name": "location-share",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Consent-based, one-time location sharing",
   "scripts": {
-    "dev": "wrangler dev --env local --ip 127.0.0.1 --port 8787",
-    "check": "node --check src/worker.js && node --check src/session.js && node --check public/app.js && node --check public/maps.js",
-    "test": "node --test tests/session.test.js",
+    "dev": "node scripts/local-server.js",
+    "check": "node --check src/worker.js && node --check src/api.js && node --check src/session.js && node --check src/capabilities.js && node --check public/app.js && node --check public/maps.js && node scripts/headers.js --check && node scripts/vendor.js --check",
+    "test": "node --test tests/*.test.js",
     "test:browser": "playwright test",
     "build": "wrangler deploy --env='' --dry-run --outdir .build",
-    "deploy": "wrangler deploy --env=''"
+    "deploy": "wrangler deploy --env=''",
+    "headers:sync": "node scripts/headers.js",
+    "vendor:sync": "node scripts/vendor.js",
+    "signing:setup": "node scripts/setup-signing.js",
+    "prebuild": "npm run check",
+    "predeploy": "npm run check"
   },
   "devDependencies": {
     "@playwright/test": "1.58.2",

@@ -21,15 +21,21 @@ const VECTOR_ATTRIBUTION = '<a href="https://openfreemap.org/" target="_blank" r
 const RASTER_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors';
 
 export function showMap(p) {
+  const container = document.getElementById('position-map');
+  const selector = document.getElementById('map-style');
+  if (Math.abs(p.latitude) > 85.05112878) {
+    container.textContent = '此位置超出网页地图的显示范围。请查看坐标或通过地图 APP 打开。';
+    container.classList.add('map-unavailable'); selector.disabled = true;
+    container.dataset.basemap = 'unsupported';
+    return () => container.replaceChildren();
+  }
   const latlng = [p.latitude, p.longitude];
   const map = L.map('position-map', { scrollWheelZoom: false, maxZoom: 19 }).setView(latlng, 16);
   map.attributionControl.setPrefix(false);
   const range = L.circle(latlng, { radius: p.accuracy, color: '#245b48', weight: 1, fillOpacity: 0.12 }).addTo(map);
   if (p.accuracy > 0) map.fitBounds(range.getBounds(), { padding: [24, 24], maxZoom: 16, animate: false });
   const marker = L.circleMarker(latlng, { radius: 8, color: '#fff', weight: 3, fillColor: '#245b48', fillOpacity: 1 }).addTo(map);
-  const selector = document.getElementById('map-style');
   const note = document.getElementById('map-note');
-  const container = document.getElementById('position-map');
   let selected = 'positron', ended = false, vector = null, raster = null, timeout = null;
   try { const saved = localStorage.getItem('map-style'); if (STYLES.has(saved)) selected = saved; } catch { /* Style still switches in memory. */ }
   selector.value = selected;
