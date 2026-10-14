@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execute, digest, metadata, validatePosition, creatorAllowed, HOUR } from '../src/session.js';
+import { execute, digest, metadata, validatePosition, HOUR } from '../src/session.js';
 
 class MemoryStorage {
   constructor(record) { this.values = new Map([['record', record]]); this.queue = Promise.resolve(); }
@@ -20,7 +20,7 @@ class MemoryStorage {
 const submit = 'a'.repeat(64), view = 'b'.repeat(64), now = Date.now();
 const position = (submissionId = 'c'.repeat(32)) => ({ consent: true, submissionId, latitude: 31.2304, longitude: 121.4737, accuracy: 15, timestamp: now });
 async function fixture() {
-  return new MemoryStorage({ recipient: '小陈', purpose: '公园碰面', createdAt: now, expiresAt: now + HOUR, submitHash: await digest(submit), viewHash: await digest(view), position: null });
+  return new MemoryStorage({ initiator: '小陈', createdAt: now, expiresAt: now + HOUR, submitHash: await digest(submit), viewHash: await digest(view), position: null });
 }
 
 test('submit and view capabilities cannot be interchanged; metadata never includes coordinates', async () => {
@@ -78,18 +78,21 @@ test('bad coordinates, stale samples and missing consent are rejected without sa
   assert.throws(() => validatePosition({ ...position(), latitude: NaN }, now), { status: 400 });
 });
 
-test('metadata requires bounded names, a purpose, and an allowed expiry', () => {
-  assert.deepEqual(metadata({ recipient: ' 小陈 ', purpose: ' 碰面 ', hours: 24 }), { recipient: '小陈', purpose: '碰面', hours: 24 });
-  for (const change of [{ recipient: '' }, { recipient: 'a'.repeat(61) }, { purpose: 'a\nb' }, { hours: 25 }]) {
-    assert.throws(() => metadata({ recipient: '小陈', purpose: '碰面', hours: 24, ...change }), { status: 400 });
+test('only an optional bounded initiator is required; expiry is not client-selected', () => {
+  assert.deepEqual(metadata({}), { initiator: '' });
+  assert.deepEqual(metadata({ initiator: ' 小陈 ', hours: 999 }), { initiator: '小陈' });
+  for (const body of [null, [], { initiator: 1 }, { initiator: 'a'.repeat(61) }, { initiator: 'a\nb' }]) {
+    assert.throws(() => metadata(body), { status: 400 });
   }
 });
 
-test('creation fails closed without a configured hash and rejects other credentials', async () => {
-  assert.equal(await creatorAllowed(submit, await digest(submit)), true);
-  assert.equal(await creatorAllowed(view, await digest(submit)), false);
-  assert.equal(await creatorAllowed(submit, ''), false);
-  assert.equal(await creatorAllowed('', await digest(submit)), false);
+test('existing requests remain readable after simplifying metadata', async () => {
+  const storage = await fixture();
+  const record = await storage.get('record');
+  delete record.initiator; record.recipient = '旧发起人'; record.purpose = '旧用途';
+  await storage.put('record', record);
+  const info = await execute(storage, 'read', view, null, now);
+  assert.equal(info.initiator, '旧发起人'); assert.equal(info.purpose, undefined);
 });
 
 test('authentication failures do not charge a record quota; delete works after read quota exhausted', async () => {

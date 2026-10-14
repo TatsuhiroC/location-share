@@ -1,21 +1,28 @@
 {
   "name": "location-share",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Consent-based, one-time location sharing",
   "scripts": {
     "dev": "wrangler dev --env local --ip 127.0.0.1 --port 8787",
-    "check": "node --check src/worker.js && node --check src/session.js && node --check public/app.js",
+    "check": "node --check src/worker.js && node --check src/session.js && node --check public/app.js && node --check public/maps.js",
     "test": "node --test tests/session.test.js",
     "test:browser": "playwright test",
     "build": "wrangler deploy --env='' --dry-run --outdir .build",
-    "deploy": "wrangler deploy --env=''",
-    "admin:setup": "node scripts/setup-admin.js"
+    "deploy": "wrangler deploy --env=''"
   },
   "devDependencies": {
     "@playwright/test": "1.58.2",
+    "jsqr": "1.4.0",
+    "pngjs": "7.0.0",
     "wrangler": "4.149.0"
   },
-  "engines": { "node": ">=22.12" }
+  "engines": {
+    "node": ">=22.12"
+  },
+  "dependencies": {
+    "leaflet": "1.9.4",
+    "qrcode-generator": "2.0.4"
+  }
 }

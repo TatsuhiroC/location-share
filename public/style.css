@@ -131,3 +131,17 @@ main{padding:22px 16px 40px}
 h1{font-size:38px}
 .button-row{flex-direction:column}
 }
+
+.viewer-card{max-width:680px}
+.share-qr{width:224px;max-width:100%;margin:16px auto 8px;background:#fff;border-radius:8px;line-height:0}
+.share-qr svg{display:block;width:100%;height:auto}
+.qr-caption{text-align:center;font-size:12px;color:var(--muted);margin:10px 0 16px}
+.position-map{height:340px;width:100%;border:1px solid var(--border);border-radius:12px;background:#eef1e8;margin:24px 0 8px;z-index:0}
+.card h2.app-heading{font-size:16px;margin:24px 0 12px}
+.map-links{display:grid;grid-template-columns:1fr 1fr}
+.leaflet-container{font:12px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+@media(max-width:600px){.position-map{height:280px}}
+
+.position-details{margin:22px 0 12px;font-size:13px;color:var(--muted)}
+.position-details summary{cursor:pointer}
+#waiting-panel .status-title{font-size:18px}

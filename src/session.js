@@ -21,19 +21,13 @@ export function equal(a, b) {
   return difference === 0;
 }
 
-export async function creatorAllowed(token, hash) {
-  return TOKEN_RE.test(token || '') && TOKEN_RE.test(hash || '') && equal(await digest(token), hash);
-}
-
 export function metadata(body) {
-  const clean = (value, max) => {
-    if (typeof value !== 'string') throw new ApiError(400, 'INVALID_REQUEST');
-    const text = value.trim();
-    if (!text || text.length > max || /[\u0000-\u001f\u007f]/u.test(text)) throw new ApiError(400, 'INVALID_REQUEST');
-    return text;
-  };
-  if (!body || ![1, 24].includes(body.hours)) throw new ApiError(400, 'INVALID_REQUEST');
-  return { recipient: clean(body.recipient, 60), purpose: clean(body.purpose, 160), hours: body.hours };
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ApiError(400, 'INVALID_REQUEST');
+  const value = body.initiator ?? '';
+  if (typeof value !== 'string') throw new ApiError(400, 'INVALID_REQUEST');
+  const initiator = value.trim();
+  if (initiator.length > 60 || /[\u0000-\u001f\u007f]/u.test(initiator)) throw new ApiError(400, 'INVALID_REQUEST');
+  return { initiator };
 }
 
 export function validatePosition(body, now) {
@@ -68,7 +62,7 @@ export async function execute(storage, action, token, body, now = Date.now()) {
       if (rate.count >= (action === 'submit' ? 8 : 30)) throw new ApiError(429, 'RATE_LIMITED');
       rate.count++; rates[action] = rate; record.rates = rates;
     }
-    const common = { recipient: record.recipient, purpose: record.purpose, createdAt: record.createdAt, expiresAt: record.expiresAt, status: record.position ? 'received' : 'waiting' };
+    const common = { initiator: record.initiator ?? record.recipient ?? '', createdAt: record.createdAt, expiresAt: record.expiresAt, status: record.position ? 'received' : 'waiting' };
     if (action === 'info') { await tx.put('record', record); return { value: common }; }
     if (action === 'read') {
       const position = record.position ? { ...record.position } : null;

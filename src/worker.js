@@ -1,13 +1,13 @@
 import { DurableObject } from 'cloudflare:workers';
-import { ApiError, execute, randomHex, digest, metadata, creatorAllowed, ID_RE, HOUR } from './session.js';
+import { ApiError, execute, randomHex, digest, metadata, ID_RE, HOUR } from './session.js';
 
 const SECURITY = {
   'Cache-Control': 'no-store',
-  'Referrer-Policy': 'no-referrer',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Permissions-Policy': 'geolocation=(self), camera=(), microphone=()',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'",
+  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https://tile.openstreetmap.org; connect-src 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'",
   'Strict-Transport-Security': 'max-age=31536000'
 };
 
@@ -60,18 +60,16 @@ export default {
       if (request.headers.get('Sec-Fetch-Site') === 'cross-site') throw new ApiError(403, 'ORIGIN_DENIED');
       const client = await digest(request.headers.get('CF-Connecting-IP') || 'local');
       await limit(env, 'REQUEST_LIMITER', client);
-      if (url.pathname === '/api/health' && request.method === 'GET') return secure(json({ ok: true, version: '0.2.0' }));
+      if (url.pathname === '/api/health' && request.method === 'GET') return secure(json({ ok: true, version: '0.3.0' }));
       const token = bearer(request);
       if (url.pathname === '/api/requests' && request.method === 'POST') {
         await limit(env, 'CREATE_LIMITER', client);
-        if (!env.CREATOR_KEY_HASH) throw new ApiError(503, 'CREATOR_NOT_CONFIGURED');
-        if (!await creatorAllowed(token, env.CREATOR_KEY_HASH)) throw new ApiError(401, 'CREATOR_REQUIRED');
         const data = metadata(await readJson(request));
-        // Global creation quota is charged only after authorization and input validation.
+        // Anonymous creation remains bounded; invalid input does not consume admission quota.
         if (!await env.ADMISSION.get(env.ADMISSION.idFromName('global')).admit(client)) throw new ApiError(429, 'RATE_LIMITED');
         const id = randomHex(16), submitToken = randomHex(), viewToken = randomHex(), now = Date.now();
         const record = {
-          recipient: data.recipient, purpose: data.purpose, createdAt: now, expiresAt: now + data.hours * HOUR,
+          initiator: data.initiator, createdAt: now, expiresAt: now + HOUR,
           submitHash: await digest(submitToken), viewHash: await digest(viewToken), position: null
         };
         await env.SESSIONS.get(env.SESSIONS.idFromName(id)).initialize(record);

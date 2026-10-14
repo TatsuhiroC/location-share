@@ -1,43 +1,65 @@
 import { test, expect } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
+import jsQR from 'jsqr';
+import { PNG } from 'pngjs';
+
+// Integration tests never download third-party map tiles.
+test.beforeEach(async ({ context }) => {
+  await context.setExtraHTTPHeaders({ 'CF-Connecting-IP': `browser-${randomBytes(8).toString('hex')}` });
+  await context.route('https://tile.openstreetmap.org/**', route => route.fulfill({ status: 200, contentType: 'image/png', body: PNG.sync.write(new PNG({ width: 256, height: 256 })) }));
+});
 
 async function create(request, extra = {}) {
   const response = await request.post('/api/requests', {
-    headers: { Authorization: `Bearer ${'e'.repeat(64)}`, 'CF-Connecting-IP': `test-${randomBytes(8).toString('hex')}` },
-    data: { recipient: '小陈', purpose: '公园碰面', hours: 24, ...extra }
+    headers: { 'CF-Connecting-IP': `test-${randomBytes(8).toString('hex')}` },
+    data: { initiator: '小陈', ...extra }
   });
   expect(response.status()).toBe(201);
   return response.json();
 }
-const auth = token => ({ Authorization: `Bearer ${token}` });
+const auth = token => ({ Authorization: `Bearer ${token}`, 'CF-Connecting-IP': `api-${randomBytes(8).toString('hex')}` });
 const link = (data, role) => `/#${role}/${data.id}/${role === 'view' ? data.viewToken : data.submitToken}`;
 
-test('create, explicit consent, real browser geolocation, receipt, refresh, deletion', async ({ browser, baseURL }) => {
-  const owner = await browser.newContext({ baseURL });
+test('simple creation, independently decoded QR, explicit consent, automatic map, refresh, deletion', async ({ browser, baseURL }) => {
+  const owner = await browser.newContext({ baseURL, extraHTTPHeaders: { 'CF-Connecting-IP': `owner-${randomBytes(8).toString('hex')}` } });
   const sharer = await browser.newContext({ baseURL, permissions: ['geolocation'], geolocation: { latitude: 31.2304, longitude: 121.4737, accuracy: 12 } });
   const ownerPage = await owner.newPage();
   await ownerPage.goto('/');
-  await ownerPage.getByLabel('创建口令', { exact: false }).fill('e'.repeat(64));
-  await ownerPage.getByLabel('接收人', { exact: false }).fill('小陈');
-  await ownerPage.getByLabel('分享用途', { exact: true }).fill('公园碰面');
-  await ownerPage.getByRole('button', { name: '创建分享链接' }).click();
+  await owner.route('https://tile.openstreetmap.org/**', route => route.abort());
+  await ownerPage.getByLabel('分享发起人', { exact: false }).fill('小陈');
+  await ownerPage.getByRole('button', { name: '生成临时链接' }).click();
   await expect(ownerPage.getByRole('heading', { name: '链接准备好了' })).toBeVisible();
+  await expect(ownerPage.locator('#share-qr svg')).toBeVisible();
   const shareUrl = await ownerPage.getByLabel('发给对方的分享链接').inputValue();
-  const viewUrl = await ownerPage.getByLabel('自己的专属查看链接').inputValue();
-  expect(shareUrl).not.toEqual(viewUrl);
-  await ownerPage.goto(viewUrl);
+  expect(ownerPage.url()).toContain('#view/');
+  const qr = PNG.sync.read(await ownerPage.locator('#share-qr').screenshot());
+  expect(jsQR(new Uint8ClampedArray(qr.data), qr.width, qr.height)?.data).toBe(shareUrl);
   await expect(ownerPage.getByText('等待一次位置分享')).toBeVisible();
   const sharePage = await sharer.newPage();
   let submissions = 0;
   sharePage.on('request', req => { if (req.method() === 'POST' && req.url().endsWith('/location')) submissions++; });
   await sharePage.goto(shareUrl);
-  await expect(sharePage.getByRole('button', { name: '同意并分享当前位置' })).toBeVisible();
+  await expect(sharePage.getByRole('button', { name: '允许分享当前位置' })).toBeVisible();
   expect(submissions).toBe(0);
-  await sharePage.getByRole('button', { name: '同意并分享当前位置' }).click();
+  await sharePage.getByRole('button', { name: '允许分享当前位置' }).click();
   await expect(sharePage.getByRole('heading', { name: '位置已发送' })).toBeVisible();
   expect(submissions).toBe(1);
-  await ownerPage.getByRole('button', { name: '刷新', exact: true }).click();
-  await expect(ownerPage.locator('#latitude')).toHaveText('31.230400');
+  // The sender remains on the original generated page; no manual refresh or navigation.
+  await expect(ownerPage.locator('#latitude')).toHaveText('31.230400', { timeout: 12000 });
+  await expect(ownerPage.locator('#position-map')).toBeVisible();
+  await expect(ownerPage.locator('#position-map path.leaflet-interactive')).toHaveCount(2);
+  await expect(ownerPage.locator('#position-map path.leaflet-interactive').last()).toBeVisible();
+  await expect(ownerPage.locator('#position-map')).toContainText('OpenStreetMap');
+  await expect(ownerPage.locator('#map-note')).toContainText('底图加载失败');
+  const amap = new URL(await ownerPage.locator('#amap-link').getAttribute('href'));
+  expect(amap.searchParams.get('position')).toBe('121.4737,31.2304');
+  expect(amap.searchParams.get('coordinate')).toBe('wgs84');
+  expect(amap.searchParams.get('callnative')).toBe('1');
+  const baidu = new URL(await ownerPage.locator('#baidu-link').getAttribute('href'));
+  expect(baidu.searchParams.get('location')).toBe('31.2304,121.4737');
+  expect(baidu.searchParams.get('coord_type')).toBe('wgs84');
+  expect(new URL(await ownerPage.locator('#google-link').getAttribute('href')).searchParams.get('query')).toBe('31.2304,121.4737');
+  expect(new URL(await ownerPage.locator('#apple-link').getAttribute('href')).searchParams.get('ll')).toBe('31.2304,121.4737');
   await expect(ownerPage.locator('#accuracy')).toHaveText('约 12 米');
   await ownerPage.reload();
   await expect(ownerPage.locator('#longitude')).toHaveText('121.473700');
@@ -55,7 +77,7 @@ test('permission denial sends no position and leaves request waiting', async ({ 
     navigator.geolocation.getCurrentPosition = (_ok, fail) => fail({ code: 1 });
   });
   await page.goto(link(data, 'share'));
-  await page.getByRole('button', { name: '同意并分享当前位置' }).click();
+  await page.getByRole('button', { name: '允许分享当前位置' }).click();
   await expect(page.getByRole('alert')).toContainText('定位权限未允许，没有发送位置');
   const response = await request.get(`/api/requests/${data.id}`, { headers: auth(data.viewToken) });
   expect((await response.json()).position).toBeNull();
@@ -65,7 +87,7 @@ test('cancelled geolocation callback cannot later send a position', async ({ pag
   const data = await create(request);
   await page.addInitScript(() => { navigator.geolocation.getCurrentPosition = ok => { window.delayedFix = ok; }; });
   await page.goto(link(data, 'share'));
-  await page.getByRole('button', { name: '同意并分享当前位置' }).click();
+  await page.getByRole('button', { name: '允许分享当前位置' }).click();
   await page.getByRole('button', { name: '取消获取位置' }).click();
   await page.evaluate(() => window.delayedFix({ coords: { latitude: 31, longitude: 121, accuracy: 20 }, timestamp: Date.now() }));
   await expect(page.locator('#share-feedback')).toHaveText('已取消，没有发送位置。');
@@ -83,7 +105,7 @@ test('lost receipt retries the same snapshot without duplicating the submission'
     else await route.continue();
   });
   await page.goto(link(data, 'share'));
-  await page.getByRole('button', { name: '同意并分享当前位置' }).click();
+  await page.getByRole('button', { name: '允许分享当前位置' }).click();
   await expect(page.getByRole('button', { name: '重试发送这次位置' })).toBeVisible();
   await page.getByRole('button', { name: '重试发送这次位置' }).click();
   await expect(page.getByRole('heading', { name: '位置已发送' })).toBeVisible();
@@ -114,48 +136,62 @@ test('capabilities, bounded body, cross-origin mutation, and no-store headers on
 });
 
 test('request text remains text; mobile layout has no horizontal overflow', async ({ page, request }) => {
-  const data = await create(request, { recipient: '<img src=x onerror=alert(1)>', purpose: '<script>alert(1)</script>' });
+  const data = await create(request, { initiator: '<img src=x onerror=alert(1)>' });
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto(link(data, 'share'));
-  await expect(page.locator('#share-recipient')).toHaveText('<img src=x onerror=alert(1)>');
-  expect(await page.locator('#share-recipient img').count()).toBe(0);
+  await expect(page.locator('#share-initiator')).toHaveText('<img src=x onerror=alert(1)>');
+  expect(await page.locator('#share-initiator img').count()).toBe(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '创建一次位置请求' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '生成临时分享链接' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
 test('creation limit enforces five requests per minute per client', async ({ request }) => {
   const client = `limit-${randomBytes(8).toString('hex')}`;
   for (let i = 0; i < 6; i++) {
-    const response = await request.post('/api/requests', { headers: { ...auth('e'.repeat(64)), 'CF-Connecting-IP': client }, data: { recipient: '小陈', purpose: '碰面', hours: 1 } });
+    const response = await request.post('/api/requests', { headers: { 'CF-Connecting-IP': client }, data: {} });
     expect(response.status()).toBe(i < 5 ? 201 : 429);
   }
 });
 
-test('unauthorized and invalid creation attempts cannot exhaust valid creation quota', async ({ request }) => {
+test('invalid input cannot exhaust the valid creation quota', async ({ request }) => {
   const client = `failed-${randomBytes(8).toString('hex')}`;
-  const data = { recipient: '小陈', purpose: '碰面', hours: 1 };
   for (let i = 0; i < 6; i++) {
-    const response = await request.post('/api/requests', { headers: { ...auth('f'.repeat(64)), 'CF-Connecting-IP': client }, data });
-    expect(response.status()).toBe(401);
-  }
-  for (let i = 0; i < 6; i++) {
-    const response = await request.post('/api/requests', { headers: { ...auth('e'.repeat(64)), 'CF-Connecting-IP': client }, data: { ...data, recipient: '' } });
+    const response = await request.post('/api/requests', { headers: { 'CF-Connecting-IP': client }, data: { initiator: 'a'.repeat(61) } });
     expect(response.status()).toBe(400);
   }
-  expect((await request.post('/api/requests', { headers: { ...auth('e'.repeat(64)), 'CF-Connecting-IP': client }, data })).status()).toBe(201);
+  expect((await request.post('/api/requests', { headers: { 'CF-Connecting-IP': client }, data: {} })).status()).toBe(201);
 });
 
-test('private admin entry enables creation; normal visitors cannot create', async ({ page }) => {
+test('home has one optional field; anonymous creation has fixed one-hour expiry', async ({ page, request }) => {
   await page.goto('/');
-  await expect(page.getByLabel('创建口令', { exact: false })).toBeVisible();
-  await page.goto(`/#admin/${'e'.repeat(64)}`);
-  await expect(page.locator('#creator-ready')).toBeVisible();
-  await expect(page.getByLabel('创建口令', { exact: false })).toBeHidden();
-  expect(page.url()).not.toContain('e'.repeat(64));
+  await expect(page.locator('form input')).toHaveCount(1);
+  await expect(page.getByLabel('分享发起人', { exact: false })).toBeVisible();
+  expect(await page.getByLabel('分享发起人', { exact: false }).getAttribute('required')).toBeNull();
+  expect(await page.locator('#creator-key, #purpose, #hours').count()).toBe(0);
+  await page.getByRole('button', { name: '生成临时链接' }).click();
+  await expect(page.locator('#share-qr svg')).toBeVisible();
+  await expect(page.locator('#view-initiator')).toHaveText('未填写');
+  const data = await create(request, { initiator: '', hours: 24 });
+  const response = await request.get(`/api/requests/${data.id}`, { headers: auth(data.viewToken) });
+  const info = await response.json();
+  expect(info.initiator).toBe(''); expect(info.expiresAt - info.createdAt).toBe(3600000);
   await page.reload();
-  await expect(page.locator('#creator-ready')).toBeVisible();
-  await page.getByRole('button', { name: '退出', exact: true }).click();
-  await expect(page.getByLabel('创建口令', { exact: false })).toBeVisible();
+  await expect(page.locator('#share-qr svg')).toBeVisible();
+});
+
+test('mobile APP links preserve WGS84; map and QR do not overflow on narrow screens', async ({ page, request }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.addInitScript(() => Object.defineProperty(navigator, 'userAgent', { get: () => 'iPhone Safari' }));
+  const data = await create(request);
+  const receipt = await request.post(`/api/requests/${data.id}/location`, { headers: auth(data.submitToken), data: { latitude: 31, longitude: 121, accuracy: 10, timestamp: Date.now(), consent: true, submissionId: 'c'.repeat(32) } });
+  expect(receipt.status()).toBe(200);
+  await page.goto(link(data, 'view'));
+  await expect(page.locator('#position-map')).toBeVisible();
+  const baidu = new URL(await page.locator('#baidu-link').getAttribute('href'));
+  expect(baidu.protocol).toBe('baidumap:'); expect(baidu.searchParams.get('coord_type')).toBe('wgs84');
+  expect(await page.locator('#baidu-web').getAttribute('href')).toContain('https://api.map.baidu.com/marker');
+  expect(await page.locator('#send-panel').isHidden()).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
