@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execute, digest, metadata, validatePosition, HOUR } from '../src/session.js';
+import { execute, digest, metadata, validatePosition, creatorAllowed, HOUR } from '../src/session.js';
 
 class MemoryStorage {
   constructor(record) { this.values = new Map([['record', record]]); this.queue = Promise.resolve(); }
@@ -83,4 +83,20 @@ test('metadata requires bounded names, a purpose, and an allowed expiry', () => 
   for (const change of [{ recipient: '' }, { recipient: 'a'.repeat(61) }, { purpose: 'a\nb' }, { hours: 25 }]) {
     assert.throws(() => metadata({ recipient: '小陈', purpose: '碰面', hours: 24, ...change }), { status: 400 });
   }
+});
+
+test('creation fails closed without a configured hash and rejects other credentials', async () => {
+  assert.equal(await creatorAllowed(submit, await digest(submit)), true);
+  assert.equal(await creatorAllowed(view, await digest(submit)), false);
+  assert.equal(await creatorAllowed(submit, ''), false);
+  assert.equal(await creatorAllowed('', await digest(submit)), false);
+});
+
+test('authentication failures do not charge a record quota; delete works after read quota exhausted', async () => {
+  const storage = await fixture();
+  for (let i = 0; i < 35; i++) await assert.rejects(execute(storage, 'read', submit, null, now), { status: 401 });
+  for (let i = 0; i < 30; i++) await execute(storage, 'read', view, null, now);
+  await assert.rejects(execute(storage, 'read', view, null, now), { status: 429 });
+  await execute(storage, 'delete', view, null, now);
+  assert.equal(await storage.get('record'), undefined);
 });

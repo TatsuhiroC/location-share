@@ -8,7 +8,7 @@ export default defineConfig({
   timeout: 30000,
   use: { baseURL, trace: 'retain-on-failure' },
   webServer: {
-    command: 'wrangler dev --ip 127.0.0.1 --port 8790 --inspector-port 9230 --persist-to .wrangler/test-state',
+    command: 'node scripts/test-server.js',
     url: `${baseURL}/api/health`,
     reuseExistingServer: false,
     timeout: 60000,

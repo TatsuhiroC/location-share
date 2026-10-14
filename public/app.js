@@ -2,6 +2,8 @@ const app = document.querySelector('#app');
 const API_ERRORS = {
   NOT_FOUND: '这个链接已失效、已删除，或地址不完整。', EXPIRED: '这个链接已过期，应用记录已删除。',
   UNAUTHORIZED: '链接的访问权限不正确，请重新打开完整的原始链接。',
+  CREATOR_REQUIRED: '创建权限未验证，请使用你的专属管理入口或正确的创建口令。',
+  CREATOR_NOT_CONFIGURED: '管理员尚未启用创建功能，请稍后再试。',
   ALREADY_RECEIVED: '这个链接已经收到一次位置，无法再次提交。',
   INVALID_LOCATION: '定位结果不完整或已超过五分钟，请重新获取位置。',
   RATE_LIMITED: '请求较多，已达到服务的访问额度，请稍后再试。',
@@ -64,6 +66,9 @@ function savePermission(role, id, token) {
 function cachedPermission(role, id) {
   try { return sessionStorage.getItem(`permission:${role}:${id}`); } catch { return null; }
 }
+function creatorKey() { try { return sessionStorage.getItem('creator-key') || ''; } catch { return ''; } }
+let currentCreator = creatorKey();
+function keepCreator(key) { currentCreator = key; try { sessionStorage.setItem('creator-key', key); } catch { /* In-memory access remains available. */ } }
 
 async function copy(value, outputId, inputId) {
   try { await navigator.clipboard.writeText(value); message(outputId, '已复制。'); }
@@ -89,22 +94,30 @@ function home() {
   shell(`<div class="home-layout"><section class="intro"><div class="eyebrow">A LITTLE CLOSER</div><h1>告诉我，<br><span class="accent">你在这里。</span></h1><p class="lead">把一个链接发给对方。经对方同意，<br>收下一次当前位置，让见面更简单。</p>
     <div class="steps"><div class="step"><span>01 / CREATE</span><strong>创建链接</strong></div><div class="arrow">→</div><div class="step"><span>02 / ALLOW</span><strong>对方允许</strong></div><div class="arrow">→</div><div class="step"><span>03 / RECEIVE</span><strong>收到位置</strong></div></div>
     <p class="small-note">无需安装应用。只分享一次位置，记录自动过期。你可以稍后打开专属查看链接。</p></section>
-    <section class="card"><div class="card-top">NEW LOCATION REQUEST <span class="pill">v0.1</span></div><h2>创建一次位置请求</h2><p class="card-sub">让对方知道位置将发给谁、用来做什么。</p>
-    <form id="create-form"><div class="field"><label for="recipient">接收人 <span class="hint">对方会看到这个名字</span></label><input id="recipient" name="recipient" required maxlength="60" autocomplete="name" placeholder="例如：小陈"></div>
+    <section class="card"><div class="card-top">NEW LOCATION REQUEST <span class="pill">v0.2</span></div><h2>创建一次位置请求</h2><p class="card-sub">让对方知道位置将发给谁、用来做什么。</p>
+    <form id="create-form"><div id="creator-field" class="field"><label for="creator-key">创建口令 <span class="hint">仅管理员可以创建</span></label><input id="creator-key" type="password" autocomplete="off" spellcheck="false" placeholder="输入你的专属创建口令" maxlength="64"></div>
+    <p id="creator-ready" class="privacy-copy" hidden>已启用专属创建权限。<button id="copy-admin-link" class="cancel-button" type="button">复制管理入口</button> <button id="forget-creator" class="cancel-button" type="button">退出</button></p><div id="admin-note" role="status" class="message" hidden></div>
+    <div class="field"><label for="recipient">接收人 <span class="hint">对方会看到这个名字</span></label><input id="recipient" name="recipient" required maxlength="60" autocomplete="name" placeholder="例如：小陈"></div>
     <div class="field"><label for="purpose">分享用途</label><textarea id="purpose" name="purpose" required maxlength="160" placeholder="例如：我们在公园碰面，方便找到你。"></textarea></div>
     <div class="field"><label for="hours">链接有效期</label><select id="hours" name="hours"><option value="24">24 小时</option><option value="1">1 小时</option></select></div>
     <div id="create-error" role="alert" hidden></div><button id="create-button" class="primary full" type="submit">创建分享链接 <span aria-hidden="true">↗</span></button>
     <p class="form-foot">创建链接不会获取你自己的位置。</p></form></section></div>`);
+  el('creator-field').hidden = !!currentCreator; el('creator-ready').hidden = !currentCreator;
+  el('copy-admin-link').onclick = () => copy(`${location.origin}/#admin/${currentCreator}`, 'admin-note');
+  el('forget-creator').onclick = () => { currentCreator = ''; try { sessionStorage.removeItem('creator-key'); } catch {} home(); };
   el('create-form').addEventListener('submit', async event => {
     event.preventDefault();
     const button = el('create-button');
     if (button.disabled) return;
     button.disabled = true; button.textContent = '正在创建…'; message('create-error', '');
     const version = navigation;
+    const key = currentCreator || el('creator-key').value.trim();
+    if (!/^[a-f0-9]{64}$/.test(key)) { message('create-error', '请使用你的专属管理入口，或输入完整的创建口令。', true); button.disabled = false; button.textContent = '创建分享链接 ↗'; return; }
     const recipient = el('recipient').value.trim(), purpose = el('purpose').value.trim(), hours = Number(el('hours').value);
     try {
-      const result = await api('/requests', { method: 'POST', body: { recipient, purpose, hours } });
+      const result = await api('/requests', { method: 'POST', token: key, body: { recipient, purpose, hours } });
       if (navigation !== version) return;
+      keepCreator(key);
       savePermission('view', result.id, result.viewToken);
       created(result, recipient, purpose);
     } catch (error) {
@@ -272,6 +285,12 @@ async function route() {
   const version = ++navigation;
   const fragment = location.hash.slice(1);
   if (!fragment) { home(); return; }
+  const admin = /^admin\/([a-f0-9]{64})$/.exec(fragment);
+  if (admin) {
+    keepCreator(admin[1]);
+    if (creatorKey() === admin[1]) history.replaceState(null, '', location.pathname);
+    home(); return;
+  }
   const match = /^(share|view)\/([a-f0-9]{32})(?:\/([a-f0-9]{64}))?$/.exec(fragment);
   if (!match) { fatal(new Error('链接不完整，请重新打开原始链接。')); return; }
   const [, role, id, originalToken] = match;

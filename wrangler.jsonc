@@ -3,8 +3,10 @@
   "name": "location-share",
   "main": "src/worker.js",
   "compatibility_date": "2026-10-01",
-  "workers_dev": true,
+  "workers_dev": false,
   "preview_urls": false,
+  "routes": [{ "pattern": "location.pizzasend.dpdns.org", "custom_domain": true }],
+  "vars": { "PUBLIC_ORIGIN": "https://location.pizzasend.dpdns.org" },
   "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": true },
   "durable_objects": {
     "bindings": [
@@ -13,5 +15,30 @@
     ]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LocationSession", "Admission"] }],
+  "ratelimits": [
+    { "name": "REQUEST_LIMITER", "namespace_id": "91701", "simple": { "limit": 120, "period": 60 } },
+    { "name": "CREATE_LIMITER", "namespace_id": "91702", "simple": { "limit": 20, "period": 60 } },
+    { "name": "READ_LIMITER", "namespace_id": "91703", "simple": { "limit": 90, "period": 60 } },
+    { "name": "WRITE_LIMITER", "namespace_id": "91704", "simple": { "limit": 15, "period": 60 } }
+  ],
+  "env": {
+    "local": {
+      "name": "location-share-local",
+      "workers_dev": false,
+      "preview_urls": false,
+      "routes": [],
+      "vars": { "PUBLIC_ORIGIN": "" },
+      "durable_objects": { "bindings": [
+        { "name": "SESSIONS", "class_name": "LocationSession" },
+        { "name": "ADMISSION", "class_name": "Admission" }
+      ] },
+      "ratelimits": [
+        { "name": "REQUEST_LIMITER", "namespace_id": "91711", "simple": { "limit": 120, "period": 60 } },
+        { "name": "CREATE_LIMITER", "namespace_id": "91712", "simple": { "limit": 20, "period": 60 } },
+        { "name": "READ_LIMITER", "namespace_id": "91713", "simple": { "limit": 90, "period": 60 } },
+        { "name": "WRITE_LIMITER", "namespace_id": "91714", "simple": { "limit": 15, "period": 60 } }
+      ]
+    }
+  },
   "observability": { "enabled": false }
 }

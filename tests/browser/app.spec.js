@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 
 async function create(request, extra = {}) {
   const response = await request.post('/api/requests', {
-    headers: { 'CF-Connecting-IP': `test-${randomBytes(8).toString('hex')}` },
+    headers: { Authorization: `Bearer ${'e'.repeat(64)}`, 'CF-Connecting-IP': `test-${randomBytes(8).toString('hex')}` },
     data: { recipient: '小陈', purpose: '公园碰面', hours: 24, ...extra }
   });
   expect(response.status()).toBe(201);
@@ -17,6 +17,7 @@ test('create, explicit consent, real browser geolocation, receipt, refresh, dele
   const sharer = await browser.newContext({ baseURL, permissions: ['geolocation'], geolocation: { latitude: 31.2304, longitude: 121.4737, accuracy: 12 } });
   const ownerPage = await owner.newPage();
   await ownerPage.goto('/');
+  await ownerPage.getByLabel('创建口令', { exact: false }).fill('e'.repeat(64));
   await ownerPage.getByLabel('接收人', { exact: false }).fill('小陈');
   await ownerPage.getByLabel('分享用途', { exact: true }).fill('公园碰面');
   await ownerPage.getByRole('button', { name: '创建分享链接' }).click();
@@ -127,7 +128,34 @@ test('request text remains text; mobile layout has no horizontal overflow', asyn
 test('creation limit enforces five requests per minute per client', async ({ request }) => {
   const client = `limit-${randomBytes(8).toString('hex')}`;
   for (let i = 0; i < 6; i++) {
-    const response = await request.post('/api/requests', { headers: { 'CF-Connecting-IP': client }, data: { recipient: '小陈', purpose: '碰面', hours: 1 } });
+    const response = await request.post('/api/requests', { headers: { ...auth('e'.repeat(64)), 'CF-Connecting-IP': client }, data: { recipient: '小陈', purpose: '碰面', hours: 1 } });
     expect(response.status()).toBe(i < 5 ? 201 : 429);
   }
+});
+
+test('unauthorized and invalid creation attempts cannot exhaust valid creation quota', async ({ request }) => {
+  const client = `failed-${randomBytes(8).toString('hex')}`;
+  const data = { recipient: '小陈', purpose: '碰面', hours: 1 };
+  for (let i = 0; i < 6; i++) {
+    const response = await request.post('/api/requests', { headers: { ...auth('f'.repeat(64)), 'CF-Connecting-IP': client }, data });
+    expect(response.status()).toBe(401);
+  }
+  for (let i = 0; i < 6; i++) {
+    const response = await request.post('/api/requests', { headers: { ...auth('e'.repeat(64)), 'CF-Connecting-IP': client }, data: { ...data, recipient: '' } });
+    expect(response.status()).toBe(400);
+  }
+  expect((await request.post('/api/requests', { headers: { ...auth('e'.repeat(64)), 'CF-Connecting-IP': client }, data })).status()).toBe(201);
+});
+
+test('private admin entry enables creation; normal visitors cannot create', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByLabel('创建口令', { exact: false })).toBeVisible();
+  await page.goto(`/#admin/${'e'.repeat(64)}`);
+  await expect(page.locator('#creator-ready')).toBeVisible();
+  await expect(page.getByLabel('创建口令', { exact: false })).toBeHidden();
+  expect(page.url()).not.toContain('e'.repeat(64));
+  await page.reload();
+  await expect(page.locator('#creator-ready')).toBeVisible();
+  await page.getByRole('button', { name: '退出', exact: true }).click();
+  await expect(page.getByLabel('创建口令', { exact: false })).toBeVisible();
 });
