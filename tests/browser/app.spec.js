@@ -3,9 +3,20 @@ import { randomBytes } from 'node:crypto';
 import jsQR from 'jsqr';
 import { PNG } from 'pngjs';
 
-// Integration tests never download third-party map tiles.
+async function isolateClient(context) {
+  const client = `browser-${randomBytes(8).toString('hex')}`;
+  await context.route('**/api/**', route => route.continue({ headers: { ...route.request().headers(), 'cf-connecting-ip': client } }));
+}
+async function vectorStyles(context) {
+  await context.route('https://tiles.openfreemap.org/**', route => {
+    const theme = route.request().url().split('/').at(-1);
+    const color = theme === 'dark' ? '#243c37' : theme === 'liberty' ? '#cadfe2' : '#f5f6ef';
+    return route.fulfill({ contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, json: { version: 8, sources: {}, layers: [{ id: 'background', type: 'background', paint: { 'background-color': color } }] } });
+  });
+}
+// Integration tests never download third-party map tiles or fonts.
 test.beforeEach(async ({ context }) => {
-  await context.setExtraHTTPHeaders({ 'CF-Connecting-IP': `browser-${randomBytes(8).toString('hex')}` });
+  await isolateClient(context); await vectorStyles(context);
   await context.route('https://tile.openstreetmap.org/**', route => route.fulfill({ status: 200, contentType: 'image/png', body: PNG.sync.write(new PNG({ width: 256, height: 256 })) }));
 });
 
@@ -21,7 +32,9 @@ const auth = token => ({ Authorization: `Bearer ${token}`, 'CF-Connecting-IP': `
 const link = (data, role) => `/#${role}/${data.id}/${role === 'view' ? data.viewToken : data.submitToken}`;
 
 test('simple creation, independently decoded QR, explicit consent, automatic map, refresh, deletion', async ({ browser, baseURL }) => {
-  const owner = await browser.newContext({ baseURL, extraHTTPHeaders: { 'CF-Connecting-IP': `owner-${randomBytes(8).toString('hex')}` } });
+  const owner = await browser.newContext({ baseURL });
+  await isolateClient(owner);
+  await owner.route('https://tiles.openfreemap.org/**', route => route.abort());
   const sharer = await browser.newContext({ baseURL, permissions: ['geolocation'], geolocation: { latitude: 31.2304, longitude: 121.4737, accuracy: 12 } });
   const ownerPage = await owner.newPage();
   await ownerPage.goto('/');
@@ -50,7 +63,7 @@ test('simple creation, independently decoded QR, explicit consent, automatic map
   await expect(ownerPage.locator('#position-map path.leaflet-interactive')).toHaveCount(2);
   await expect(ownerPage.locator('#position-map path.leaflet-interactive').last()).toBeVisible();
   await expect(ownerPage.locator('#position-map')).toContainText('OpenStreetMap');
-  await expect(ownerPage.locator('#map-note')).toContainText('底图加载失败');
+  await expect(ownerPage.locator('#map-note')).toContainText('底图加载失败', { timeout: 16000 });
   const amap = new URL(await ownerPage.locator('#amap-link').getAttribute('href'));
   expect(amap.searchParams.get('position')).toBe('121.4737,31.2304');
   expect(amap.searchParams.get('coordinate')).toBe('wgs84');
@@ -230,7 +243,9 @@ test('coarse fix is held locally until confirmed; receiver sees a warning and th
   await expect(page.locator('#position-precision')).toContainText('本次定位精度较低');
   await expect(page.locator('#position-precision')).toContainText('估算中心');
   // Coarse positions must show their uncertainty rather than an enlarged pinpoint.
-  expect(Number(await page.locator('.leaflet-tile').first().getAttribute('src').then(src => src.split('/')[3]))).toBeLessThan(16);
+  const area = await page.locator('#position-map path.leaflet-interactive').first().boundingBox();
+  const viewport = await page.locator('#position-map').boundingBox();
+  expect(area.width).toBeGreaterThan(100); expect(area.width).toBeLessThan(viewport.width);
 });
 
 test('retry after a coarse result sends only the newly acquired better fix', async ({ page, request }) => {
@@ -275,4 +290,45 @@ test('a coarse sample that becomes stale while awaiting confirmation is never se
   await page.getByRole('button', { name: '仍发送当前大致位置' }).click();
   await expect(page.locator('#share-error')).toContainText('定位结果已超过五分钟');
   expect((await (await request.get(`/api/requests/${data.id}`, { headers: auth(data.viewToken) })).json()).position).toBeNull();
+});
+
+test('map styles switch, keep the location marker, and retain the selected preference', async ({ page, request }) => {
+  const data = await create(request);
+  const response = await request.post(`/api/requests/${data.id}/location`, { headers: auth(data.submitToken), data: { latitude: 31, longitude: 121, accuracy: 10, timestamp: Date.now(), consent: true, submissionId: 'a'.repeat(32) } });
+  expect(response.status()).toBe(200);
+  await page.goto(link(data, 'view'));
+  await expect(page.locator('#position-map')).toHaveAttribute('data-basemap', /positron|fallback/, { timeout: 16000 });
+  if (await page.locator('#position-map').getAttribute('data-basemap') === 'fallback') {
+    await expect(page.locator('#map-style')).toBeDisabled();
+    await expect(page.locator('#map-note')).toContainText('基础地图');
+    await expect(page.locator('#position-map path.leaflet-interactive')).toHaveCount(2);
+    return;
+  }
+  await expect(page.locator('#position-map canvas')).toBeVisible();
+  await expect(page.locator('#position-map')).toContainText('OpenFreeMap');
+  await expect(page.locator('#map-style')).toHaveValue('positron');
+  await page.getByLabel('地图风格', { exact: true }).selectOption('dark');
+  await expect(page.locator('#position-map')).toHaveAttribute('data-basemap', 'dark');
+  const capture = PNG.sync.read(await page.locator('#position-map').screenshot());
+  const index = (80 * capture.width + 80) * 4;
+  expect(capture.data[index]).toBeLessThan(80); // The actual GL canvas renders a dark basemap.
+  await expect(page.locator('#position-map path.leaflet-interactive')).toHaveCount(2);
+  await page.reload();
+  await expect(page.locator('#position-map')).toHaveAttribute('data-basemap', 'dark', { timeout: 16000 });
+  await expect(page.getByLabel('地图风格', { exact: true })).toHaveValue('dark');
+});
+
+test('without WebGL, the basic map still displays position and precision', async ({ page, request }) => {
+  const data = await create(request);
+  await page.addInitScript(() => {
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(type, ...args) { return type === 'webgl2' ? null : original.call(this, type, ...args); };
+  });
+  await request.post(`/api/requests/${data.id}/location`, { headers: auth(data.submitToken), data: { latitude: 31, longitude: 121, accuracy: 10, timestamp: Date.now(), consent: true, submissionId: 'b'.repeat(32) } });
+  await page.goto(link(data, 'view'));
+  await expect(page.locator('#position-map')).toHaveAttribute('data-basemap', 'fallback');
+  await expect(page.locator('#position-map path.leaflet-interactive')).toHaveCount(2);
+  await expect(page.locator('#map-style')).toBeDisabled();
+  await expect(page.locator('#position-precision')).toContainText('10 米');
+  await expect(page.locator('#map-note')).toContainText('基础地图');
 });

@@ -14,6 +14,6 @@ export default defineConfig({
     timeout: 60000,
     env: { WRANGLER_SEND_METRICS: 'false' }
   },
-  projects: [{ name: 'chromium', use: { browserName: 'chromium' } }, { name: 'webkit', use: { browserName: 'webkit' } }],
+  projects: [{ name: 'chromium', use: { browserName: 'chromium', launchOptions: { args: ['--enable-unsafe-swiftshader'] } } }, { name: 'webkit', use: { browserName: 'webkit' } }],
   reporter: [['list'], ['html', { open: 'never' }]]
 });

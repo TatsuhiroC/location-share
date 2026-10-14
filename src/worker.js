@@ -7,7 +7,7 @@ const SECURITY = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Permissions-Policy': 'geolocation=(self), camera=(), microphone=()',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https://tile.openstreetmap.org; connect-src 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'",
+  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https://tile.openstreetmap.org https://tiles.openfreemap.org; connect-src 'self' https://tiles.openfreemap.org; worker-src 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'",
   'Strict-Transport-Security': 'max-age=31536000'
 };
 
@@ -60,7 +60,7 @@ export default {
       if (request.headers.get('Sec-Fetch-Site') === 'cross-site') throw new ApiError(403, 'ORIGIN_DENIED');
       const client = await digest(request.headers.get('CF-Connecting-IP') || 'local');
       await limit(env, 'REQUEST_LIMITER', client);
-      if (url.pathname === '/api/health' && request.method === 'GET') return secure(json({ ok: true, version: '0.3.1' }));
+      if (url.pathname === '/api/health' && request.method === 'GET') return secure(json({ ok: true, version: '0.3.2' }));
       const token = bearer(request);
       if (url.pathname === '/api/requests' && request.method === 'POST') {
         await limit(env, 'CREATE_LIMITER', client);

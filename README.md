@@ -2,7 +2,7 @@
 
 生成一个临时链接或二维码。对方打开、明确允许分享位置后，你在原页面看到一次当前位置。
 
-**v0.3.1：简化流程与定位精度提醒。** 首页只有可选的「分享发起人」，无需创建口令或填写用途。链接固定 1 小时有效，不持续跟踪。
+**v0.3.2：北欧浅色地图、简化流程与定位精度提醒。** 首页只有可选的「分享发起人」，无需创建口令或填写用途。链接固定 1 小时有效，不持续跟踪。
 
 正式入口：[location.pizzasend.dpdns.org](https://location.pizzasend.dpdns.org)。网页和接口同域部署在 Cloudflare Workers，不依赖 `workers.dev`。验证范围见 [验证记录](docs/validation.md)。
 
@@ -31,8 +31,10 @@
 
 ## 地图
 
-- Leaflet 与二维码生成库本地托管，无外部脚本、字体或统计。二维码在浏览器内生成，不向第三方二维码服务提交分享链接。
-- 收到位置后才请求当前视野需要的 OpenStreetMap 瓦片，保留可见版权署名和正常浏览器缓存，不预取或离线下载。
+- 地图默认使用与网页米白、绿色配色协调的「北欧浅色」，基于 OpenFreeMap Positron 定制：浅木色建筑、浅绿公园、淡蓝水面、暖黄主路和中文优先的地名。也可以选择柔和街道、深色地图，偏好保存在本机。
+- Leaflet、MapLibre、适配组件和二维码库均本地托管，不加载第三方脚本或统计。二维码在浏览器内生成，不向第三方二维码服务提交分享链接。
+- 只有收到位置后才加载矢量地图组件，并向 OpenFreeMap 请求样式、地图数据、图标及部分字体字形；中文优先使用设备字体。地图署名保持可见。OpenFreeMap 基于 OpenStreetMap 数据，使用公开实例无需账号或 API 密钥。
+- 浏览器不支持 WebGL2、地图组件初始化失败或新底图长时间加载失败时，自动使用原 OSM 基础瓦片，保留位置标记和精度范围。基础底图也失败时仍可通过地图 APP 打开。只请求当前视野，保留正常缓存，不预取或离线下载。
 - 跨域请求只带本站 origin 作为 Referer，不发送包含访问凭据的片段网址。地图服务会看到设备网络信息和请求的地图区域。
 - 底图不可用时显示提示，位置详情和四个地图选项仍可使用。大陆网络对本站和地图服务的可达性需要实测，不能保证全部运营商可访问。
 - 高德使用官方 `coordinate=wgs84` 参数；百度使用 `coord_type=wgs84`，把浏览器坐标类型明确传给地图服务，避免把 WGS84 当作 GCJ02 / BD09。
@@ -82,7 +84,7 @@ npm run build
 
 测试使用隔离浏览器与模拟坐标，不采集真人位置。涵盖匿名创建、可选名字、独立解码二维码、明确同意、原页面自动收到位置、地图标记、四种地图链接、底图失败、刷新、删除、拒绝/取消、幂等重试、权限隔离、文本注入、窄屏布局与限流。自动测试拦截瓦片请求，不从 OSM 下载测试地图。WebKit 自动测试通过不等于 iPhone 实机验证。
 
-浏览器库锁定版本并随项目在 `public/vendor/` 托管，保留许可证。更新依赖时应同步该目录中的 Leaflet ESM/CSS 和 qrcode ESM 文件。
+浏览器库锁定版本并随项目在 `public/vendor/` 托管，保留许可证。更新依赖时应同步该目录中的库文件与许可证。MapLibre 的主模块、worker 和 CSS 同源托管；适配组件只调整了浏览器模块导入路径。Chromium 集成测试启用隔离环境的软件图形渲染；不修改用户的 Chrome 设置。
 
 ## 边界
 
@@ -93,7 +95,17 @@ npm run build
 - [W3C Geolocation](https://www.w3.org/TR/geolocation/)、[iPhone 精确位置设置](https://support.apple.com/zh-cn/102647)、[Android 位置权限](https://support.google.com/pixelphone/answer/9083622?hl=zh-Hans)。
 
 - [LocWatch](https://github.com/TatsuhiroC/locwatch)、[PizzaSend](https://github.com/TatsuhiroC/pizza-send)：项目独立实现。
-- [Leaflet](https://leafletjs.com/reference.html)、[OpenStreetMap 瓦片政策](https://operations.osmfoundation.org/policies/tiles/)。
+- [OpenFreeMap](https://openfreemap.org/)、[MapLibre](https://maplibre.org/maplibre-gl-js/docs/)、[Leaflet](https://leafletjs.com/reference.html)、[OpenStreetMap 瓦片政策](https://operations.osmfoundation.org/policies/tiles/)。
 - [高德地图标点](https://lbs.amap.com/api/uri-api/guide/mobile-web/point)、[百度地图调起](https://lbs.baidu.com/docs/webapi?title=mapadjustment/uri/web)、[Google Maps URLs](https://developers.google.com/maps/documentation/urls/get-started)、[Apple Map URLs](https://developer.apple.com/documentation/mapkit/unified-map-urls)。
 
-MIT License. Leaflet 和二维码库的许可证见 `public/vendor/`。
+MIT License. 地图组件和二维码库的许可证见 `public/vendor/`。
+
+## 地图风格预览
+
+以下为模拟坐标下的实际地图，没有读取真人位置。
+
+![与页面协调的北欧浅色](docs/images/basemap-positron.png)
+
+![柔和街道](docs/images/basemap-liberty.png)
+
+![深色地图](docs/images/basemap-dark.png)
