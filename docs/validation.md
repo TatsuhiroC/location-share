@@ -5,7 +5,7 @@
 ## 正式部署
 
 - 正式网址：<https://location.pizzasend.dpdns.org>，版本 0.3.2。
-- Cloudflare Worker：`location-share`，部署版本 `d8acfd71-a5eb-4229-8b7c-9af4220f3b61`。
+- Cloudflare Worker：`location-share`，部署版本 `d0a5b660-6878-40bb-9b2f-1c6e8afdbbda`。
 - `workers.dev` 及预览网址关闭，网页与 API 同域。
 - 已核对 `signal.pizzasend.dpdns.org` 仍绑定 `pizza-send-signal`，location 子域名绑定 `location-share`。本次没有修改 PizzaSend 的配置。
 - Chrome 已打开正式页面，确认首页只有可选的发起人字段，没有创建口令、用途或有效期选择。

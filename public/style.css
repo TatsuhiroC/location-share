@@ -158,7 +158,7 @@ h1{font-size:38px}
 .leaflet-maplibre-gl-layer{pointer-events:none}
 
 .leaflet-control-attribution{background:#fffefaed!important;color:#66796e}
-.leaflet-control-attribution a{color:#476457}
+.position-map .leaflet-control-attribution a{color:#476457}
 .leaflet-control-zoom{border:1px solid #dfe5d8!important;border-radius:8px!important;overflow:hidden;box-shadow:0 3px 12px #203d3218}
-.leaflet-bar a{background:#fffefa;color:#245b48}
-.leaflet-bar a:hover{background:#eef3e7;color:#245b48}
+.position-map .leaflet-bar a{background:#fffefa;color:#245b48}
+.position-map .leaflet-bar a:hover{background:#eef3e7;color:#245b48}
