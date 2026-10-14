@@ -195,3 +195,84 @@ test('mobile APP links preserve WGS84; map and QR do not overflow on narrow scre
   expect(await page.locator('#send-panel').isHidden()).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+async function useFixes(page, fixes) {
+  await page.addInitScript(samples => {
+    let index = 0;
+    navigator.geolocation.getCurrentPosition = ok => {
+      const fix = samples[Math.min(index++, samples.length - 1)];
+      ok({ coords: { latitude: fix.latitude ?? 31, longitude: 121, accuracy: fix.accuracy }, timestamp: Date.now() });
+    };
+  }, fixes);
+}
+
+test('coarse fix is held locally until confirmed; receiver sees a warning and the full accuracy area', async ({ page, request }) => {
+  const data = await create(request);
+  await useFixes(page, [{ accuracy: 2000 }]);
+  let submissions = 0;
+  page.on('request', req => { if (req.method() === 'POST' && req.url().endsWith('/location')) submissions++; });
+  await page.goto(link(data, 'share'));
+  await page.getByRole('button', { name: '允许分享当前位置' }).click();
+  await expect(page.getByRole('dialog', { name: '要获取更精确的位置吗？' })).toBeVisible();
+  await expect(page.locator('#accuracy-estimate')).toContainText('2.0 公里');
+  expect(submissions).toBe(0);
+  expect((await (await request.get(`/api/requests/${data.id}`, { headers: auth(data.viewToken) })).json()).position).toBeNull();
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.getByText('如何开启精确位置？', { exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('网页无法替你开启权限');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole('button', { name: '仍发送当前大致位置' }).click();
+  await expect(page.getByRole('heading', { name: '位置已发送' })).toBeVisible();
+  expect(submissions).toBe(1);
+  const stored = await (await request.get(`/api/requests/${data.id}`, { headers: auth(data.viewToken) })).json();
+  expect(stored.position.accuracy).toBe(2000);
+  await page.goto(link(data, 'view'));
+  await expect(page.locator('#position-precision')).toContainText('本次定位精度较低');
+  await expect(page.locator('#position-precision')).toContainText('估算中心');
+  // Coarse positions must show their uncertainty rather than an enlarged pinpoint.
+  expect(Number(await page.locator('.leaflet-tile').first().getAttribute('src').then(src => src.split('/')[3]))).toBeLessThan(16);
+});
+
+test('retry after a coarse result sends only the newly acquired better fix', async ({ page, request }) => {
+  const data = await create(request);
+  await useFixes(page, [{ accuracy: 2000, latitude: 31 }, { accuracy: 12, latitude: 32 }]);
+  await page.goto(link(data, 'share'));
+  await page.getByRole('button', { name: '允许分享当前位置' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByRole('button', { name: '重新获取更精确的位置' }).click();
+  await expect(page.getByRole('heading', { name: '位置已发送' })).toBeVisible();
+  const stored = await (await request.get(`/api/requests/${data.id}`, { headers: auth(data.viewToken) })).json();
+  expect(stored.position.latitude).toBe(32); expect(stored.position.accuracy).toBe(12);
+});
+
+for (const dismissal of ['button', 'escape']) {
+  test(`retry that is still coarse does not upload; ${dismissal} cancels without sending`, async ({ page, request }) => {
+    const data = await create(request);
+    await useFixes(page, [{ accuracy: 2000 }]);
+    let submissions = 0;
+    page.on('request', req => { if (req.method() === 'POST' && req.url().endsWith('/location')) submissions++; });
+    await page.goto(link(data, 'share'));
+    await page.getByRole('button', { name: '允许分享当前位置' }).click();
+    await page.getByRole('button', { name: '重新获取更精确的位置' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    expect(submissions).toBe(0);
+    if (dismissal === 'button') await page.getByRole('button', { name: '暂不分享', exact: true }).click();
+    else await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toBeHidden();
+    await expect(page.locator('#share-feedback')).toHaveText('已取消，没有发送位置。');
+    await expect(page.getByRole('button', { name: '允许分享当前位置' })).toBeEnabled();
+    expect((await (await request.get(`/api/requests/${data.id}`, { headers: auth(data.viewToken) })).json()).position).toBeNull();
+  });
+}
+
+test('a coarse sample that becomes stale while awaiting confirmation is never sent', async ({ page, request }) => {
+  const data = await create(request);
+  await useFixes(page, [{ accuracy: 2000 }]);
+  await page.goto(link(data, 'share'));
+  await page.getByRole('button', { name: '允许分享当前位置' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.evaluate(() => { const now = Date.now(); Date.now = () => now + 300001; });
+  await page.getByRole('button', { name: '仍发送当前大致位置' }).click();
+  await expect(page.locator('#share-error')).toContainText('定位结果已超过五分钟');
+  expect((await (await request.get(`/api/requests/${data.id}`, { headers: auth(data.viewToken) })).json()).position).toBeNull();
+});

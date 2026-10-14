@@ -60,7 +60,7 @@ export default {
       if (request.headers.get('Sec-Fetch-Site') === 'cross-site') throw new ApiError(403, 'ORIGIN_DENIED');
       const client = await digest(request.headers.get('CF-Connecting-IP') || 'local');
       await limit(env, 'REQUEST_LIMITER', client);
-      if (url.pathname === '/api/health' && request.method === 'GET') return secure(json({ ok: true, version: '0.3.0' }));
+      if (url.pathname === '/api/health' && request.method === 'GET') return secure(json({ ok: true, version: '0.3.1' }));
       const token = bearer(request);
       if (url.pathname === '/api/requests' && request.method === 'POST') {
         await limit(env, 'CREATE_LIMITER', client);

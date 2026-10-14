@@ -30,7 +30,8 @@ export function showMap(p) {
     if (note) { note.textContent = '底图加载失败，可以通过下面的地图 APP 打开位置。'; note.hidden = false; }
   });
   tiles.addTo(map);
-  L.circle(latlng, { radius: p.accuracy, color: '#245b48', weight: 1, fillOpacity: 0.12 }).addTo(map);
+  const range = L.circle(latlng, { radius: p.accuracy, color: '#245b48', weight: 1, fillOpacity: 0.12 }).addTo(map);
+  if (p.accuracy > 0) map.fitBounds(range.getBounds(), { padding: [24, 24], maxZoom: 16, animate: false });
   L.circleMarker(latlng, { radius: 8, color: '#fff', weight: 3, fillColor: '#245b48', fillOpacity: 1 }).addTo(map);
   map.whenReady(() => map.invalidateSize());
   return () => map.remove();

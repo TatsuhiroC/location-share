@@ -17,6 +17,9 @@ let navigation = 0;
 
 const hex = length => [...crypto.getRandomValues(new Uint8Array(length))].map(n => n.toString(16).padStart(2, '0')).join('');
 const date = value => new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+// A product warning threshold, not a test of the OS's precise-location permission.
+const ACCURACY_WARNING_METERS = 100;
+const accuracyRange = meters => meters >= 1000 ? `${(meters / 1000).toFixed(1)} 公里` : `${Math.round(meters)} 米`;
 function positionTime(value) {
   const now = Date.now();
   // Some WebKit geolocation implementations return epoch microseconds.
@@ -91,7 +94,7 @@ function home() {
   shell(`<div class="home-layout"><section class="intro"><div class="eyebrow">A LITTLE CLOSER</div><h1>告诉我，<br><span class="accent">你在这里。</span></h1><p class="lead">把链接或二维码发给对方。<br>对方允许后，在这里看到一次当前位置。</p>
     <div class="steps"><div class="step"><span>01 / CREATE</span><strong>生成链接</strong></div><div class="arrow">→</div><div class="step"><span>02 / ALLOW</span><strong>对方允许</strong></div><div class="arrow">→</div><div class="step"><span>03 / RECEIVE</span><strong>看到位置</strong></div></div>
     <p class="small-note">无需安装应用。链接 1 小时有效，只分享一次位置。</p></section>
-    <section class="card"><div class="card-top">NEW LOCATION REQUEST <span class="pill">v0.3</span></div><h2>生成临时分享链接</h2><p class="card-sub">填个名字，方便对方知道是谁发起的。也可以留空。</p>
+    <section class="card"><div class="card-top">NEW LOCATION REQUEST <span class="pill">v0.3.1</span></div><h2>生成临时分享链接</h2><p class="card-sub">填个名字，方便对方知道是谁发起的。也可以留空。</p>
     <form id="create-form"><div class="field"><label for="initiator">分享发起人 <span class="hint">可选</span></label><input id="initiator" name="initiator" maxlength="60" autocomplete="name" placeholder="例如：小陈"></div>
     <div id="create-error" role="alert" hidden></div><button id="create-button" class="primary full" type="submit">生成临时链接 <span aria-hidden="true">↗</span></button>
     <p class="form-foot">生成链接不会获取你自己的位置。</p></form></section></div>`);
@@ -141,19 +144,27 @@ async function sharePage(id, token, version) {
     shell(`<section class="page-heading"><div class="eyebrow">ONCE IS ENOUGH</div><h1>这个链接已经使用过</h1></section><section class="card center-card center"><div class="status-orbit"><span>✓</span></div><p class="status-copy">位置已分享过一次，无需重复发送。</p><a class="secondary" href="/">回到首页</a></section>`); return;
   }
   let operation = 0, pending = null, terminal = false;
-  dispose = () => { operation++; pending = null; };
+  dispose = () => { operation++; pending = null; el('accuracy-dialog')?.close(); };
   shell(`<section class="page-heading"><div class="eyebrow">YOUR LOCATION, YOUR CHOICE</div><h1>分享一次当前位置</h1><p id="share-invitation"></p></section><section class="card center-card">
     <dl class="metadata"><dt>发起人</dt><dd id="share-initiator"></dd><dt>过期时间</dt><dd id="share-expiry"></dd></dl>
     <div class="consent-text">允许后，将向发起人发送一次当前位置、精度和时间，并通过 OpenStreetMap 展示。记录在链接过期后删除。</div>
     <div id="share-feedback" role="status" class="message"></div><div id="share-error" role="alert" hidden></div>
     <button id="allow-share" class="primary full">允许分享当前位置 ↗</button>
     <div class="center"><button id="cancel-location" class="cancel-button" hidden>取消获取位置</button></div>
-    <p id="share-foot" class="form-foot">接下来浏览器会请求定位权限，请按你的意愿选择。</p><a class="back-link" href="/">暂不分享，返回首页</a></section>`);
+    <p id="share-foot" class="form-foot">接下来浏览器会请求定位权限。希望分享更准确的位置时，请选择“精确位置”。精度较低时会先询问你，不会直接发送。</p><a class="back-link" href="/">暂不分享，返回首页</a>
+    <dialog id="accuracy-dialog" aria-labelledby="accuracy-title" aria-describedby="accuracy-estimate"><h2 id="accuracy-title">要获取更精确的位置吗？</h2><p id="accuracy-estimate"></p><p class="privacy-copy">这次位置还没有发送。精度较低可能是只允许了大致位置，也可能是定位信号不好。</p>
+    <details class="precision-help"><summary>如何开启精确位置？</summary><p>iPhone：设置 → 隐私与安全性 → 定位服务 → 当前浏览器（Safari 可能显示为“Safari 网站”）→ 开启“精确位置”。</p><p>Android：设置 → 应用 → 当前浏览器 → 权限 → 位置信息 → 开启“使用精确位置”。不同手机的名称可能不同。</p><p>也请允许当前网站定位。返回本页后点击下面的“重新获取”；可以移到信号较好的地方。网页无法替你开启权限，也不能保证重新定位会更准确。</p></details>
+    <button id="retry-precise" class="primary full">重新获取更精确的位置</button><button id="send-approximate" class="secondary full">仍发送当前大致位置</button><div class="center"><button id="cancel-approximate" class="cancel-button">暂不分享</button></div></dialog></section>`);
   text('share-invitation', info.initiator ? `${info.initiator} 邀请你分享位置。是否允许？` : '有人邀请你分享位置。是否允许？');
   text('share-initiator', info.initiator || '未填写'); text('share-expiry', date(info.expiresAt));
 
   const reset = () => { el('allow-share').disabled = false; el('allow-share').textContent = pending ? '重试发送这次位置' : '允许分享当前位置 ↗'; el('cancel-location').hidden = true; };
   async function send(current) {
+    if (!pending || navigation !== version || operation !== current) return;
+    if (Date.now() >= info.expiresAt || Date.now() - pending.timestamp >= 300000) {
+      pending = null; message('share-feedback', '');
+      message('share-error', Date.now() >= info.expiresAt ? '链接已过期，请联系发起人创建新链接。' : '定位结果已超过五分钟，请重新获取位置。', true); reset(); return;
+    }
     el('cancel-location').hidden = true;
     el('allow-share').textContent = '正在发送…'; message('share-feedback', '已获取位置，正在等待接收服务确认。');
     try {
@@ -173,26 +184,45 @@ async function sharePage(id, token, version) {
     }
   }
   el('cancel-location').onclick = () => { operation++; pending = null; message('share-feedback', '已取消，没有发送位置。'); reset(); };
-  el('allow-share').onclick = () => {
-    if (terminal || el('allow-share').disabled) return;
+  const cancelApproximate = () => {
+    el('accuracy-dialog').close(); operation++; pending = null;
+    message('share-feedback', '已取消，没有发送位置。'); reset();
+  };
+  el('cancel-approximate').onclick = cancelApproximate;
+  el('accuracy-dialog').addEventListener('cancel', event => { event.preventDefault(); cancelApproximate(); });
+  el('retry-precise').onclick = () => { el('accuracy-dialog').close(); pending = null; acquire(); };
+  el('send-approximate').onclick = () => { el('accuracy-dialog').close(); void send(operation); };
+  function acquire() {
+    if (terminal) return;
     message('share-error', '');
-    if (Date.now() >= info.expiresAt) { message('share-error', '链接已过期，请联系发起人创建新链接。', true); return; }
-    if (!window.isSecureContext || !navigator.geolocation) { message('share-error', '当前浏览器无法定位，请使用 HTTPS 地址在 Safari 或 Chrome 中打开。', true); return; }
+    if (Date.now() >= info.expiresAt) { pending = null; message('share-feedback', ''); message('share-error', '链接已过期，请联系发起人创建新链接。', true); reset(); return; }
+    if (!window.isSecureContext || !navigator.geolocation) { message('share-error', '当前浏览器无法定位，请使用 HTTPS 地址在 Safari 或 Chrome 中打开。', true); reset(); return; }
     const current = ++operation;
     el('allow-share').disabled = true;
-    if (pending && Date.now() - pending.timestamp < 5 * 60 * 1000) { void send(current); return; }
     pending = null;
     el('allow-share').textContent = '正在获取位置…'; el('cancel-location').hidden = false;
     message('share-feedback', '请在浏览器提示中允许定位，并保持本页打开。');
     navigator.geolocation.getCurrentPosition(position => {
       if (navigation !== version || operation !== current) return;
       pending = { latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy: position.coords.accuracy, timestamp: positionTime(position.timestamp), consent: true, submissionId: hex(16) };
-      void send(current);
+      if (pending.accuracy > ACCURACY_WARNING_METERS) {
+        el('cancel-location').hidden = true; text('allow-share', '等待你确认…'); message('share-feedback', '');
+        text('accuracy-estimate', `浏览器估算的精度半径约 ${accuracyRange(pending.accuracy)}，当前位置可能较模糊。是否希望提高精度后再发送？`);
+        el('accuracy-dialog').showModal();
+      } else { void send(current); }
     }, error => {
       if (navigation !== version || operation !== current) return;
       const reasons = { 1: '定位权限未允许，没有发送位置。如需分享，请在浏览器与系统设置中允许定位。', 2: '暂时获取不到位置，请检查系统定位服务，或移到信号更好的地方重试。', 3: '获取位置超时，请保持本页打开后重试。' };
       message('share-feedback', ''); message('share-error', reasons[error.code] || '获取位置失败，请重试。', true); reset();
     }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+  }
+  el('allow-share').onclick = () => {
+    if (terminal || el('allow-share').disabled) return;
+    message('share-error', '');
+    // Only a previously confirmed upload can remain here after a lost receipt.
+    if (pending && Date.now() - pending.timestamp < 300000) {
+      el('allow-share').disabled = true; void send(++operation);
+    } else { acquire(); }
   };
 }
 
@@ -206,7 +236,7 @@ async function viewPage(id, token, version) {
     <div id="view-status" class="status-label">正在读取请求</div><dl class="metadata"><dt>发起人</dt><dd id="view-initiator">—</dd><dt>过期时间</dt><dd id="view-expiry">—</dd></dl>
     <section id="send-panel" class="link-box" hidden><div class="link-heading">发给对方 <span class="pill">链接 / 二维码</span></div><div id="share-qr" class="share-qr"></div><p class="qr-caption">对方扫码，或打开下面的链接</p><input id="share-url" class="link-input" readonly aria-label="发给对方的分享链接"><div class="button-row"><button id="copy-share" class="primary">复制分享链接</button><button id="native-share" class="secondary" hidden>分享…</button></div><div id="share-message" role="status" class="message"></div></section>
     <div id="waiting-panel" class="center"><h2 class="status-title">等待一次位置分享</h2><p class="status-copy">对方打开链接并允许后，<br>位置会出现在这里。</p></div>
-    <section id="position-panel" hidden><div id="position-map" class="position-map" aria-label="分享位置的 OpenStreetMap 地图"></div><p id="map-note" class="privacy-copy" role="status" hidden></p>
+    <section id="position-panel" hidden><p id="position-precision" class="notice" role="status"></p><div id="position-map" class="position-map" aria-label="分享位置的 OpenStreetMap 地图"></div><p id="map-note" class="privacy-copy" role="status" hidden></p>
     <h2 class="app-heading">通过其他 APP 打开</h2><div class="map-links"><a id="amap-link" class="secondary" target="_blank" rel="noopener noreferrer">高德地图 ↗</a><a id="baidu-link" class="secondary" target="_blank" rel="noopener noreferrer">百度地图 ↗</a><a id="google-link" class="secondary" target="_blank" rel="noopener noreferrer">Google 地图 ↗</a><a id="apple-link" class="secondary" target="_blank" rel="noopener noreferrer">苹果地图 ↗</a></div><details class="position-details"><summary>查看位置详情</summary><dl class="data-grid"><div class="data-tile"><dt>纬度</dt><dd id="latitude"></dd></div><div class="data-tile"><dt>经度</dt><dd id="longitude"></dd></div><div class="data-tile"><dt>定位精度半径</dt><dd id="accuracy"></dd></div><div class="data-tile"><dt>位置获取于</dt><dd id="position-age"></dd></div><div class="data-tile wide"><dt>获取时间 · 访问设备的当地时间</dt><dd id="position-time"></dd></div></dl></details><p id="app-fallback" class="privacy-copy" hidden>百度 APP 未打开？<a id="baidu-web" target="_blank" rel="noopener noreferrer">使用百度网页版地图</a></p><p class="privacy-copy">这是一次位置快照。地图底图由 OpenStreetMap 提供；选择 APP 后，坐标会交给对应地图服务。能否打开 APP 取决于设备和安装情况。</p></section>
     <div id="view-error" role="alert" hidden></div><div id="view-note" role="status" class="message"></div>
     <hr class="divider"><div class="button-row"><button id="refresh-view" class="secondary">刷新</button><button id="save-view-link" class="secondary">复制查看链接</button></div>
@@ -227,6 +257,9 @@ async function viewPage(id, token, version) {
     if (data.position) {
       el('waiting-panel').hidden = true; el('position-panel').hidden = false;
       const p = data.position;
+      const approximate = p.accuracy > ACCURACY_WARNING_METERS;
+      text('position-precision', approximate ? `本次定位精度较低：浏览器估算的精度半径约 ${accuracyRange(p.accuracy)}。地图上的点只是估算中心，请以圆形范围为参考。` : `浏览器估算的精度半径约 ${accuracyRange(p.accuracy)}。`);
+      el('position-precision').className = approximate ? 'precision-warning' : 'notice';
       text('view-title', '已收到对方的位置'); text('view-description', '位置已显示在地图上。'); el('send-panel').hidden = true;
       text('latitude', p.latitude.toFixed(6)); text('longitude', p.longitude.toFixed(6));
       text('accuracy', `约 ${Math.round(p.accuracy)} 米`); text('position-time', date(p.timestamp)); updateAge();
