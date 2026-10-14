@@ -3,7 +3,7 @@ import { mapLinks, showMap } from './maps.js';
 
 const app = document.querySelector('#app');
 const API_ERRORS = {
-  NOT_FOUND: '这个链接已失效、已删除，或地址不完整。', EXPIRED: '这个链接已过期，应用记录已删除。',
+  NOT_FOUND: '这个链接已失效、已删除，或地址不完整。', EXPIRED: '这个链接已过期，已不能访问位置。',
   UNAUTHORIZED: '链接的访问权限不正确，请重新打开完整的原始链接。',
   ALREADY_RECEIVED: '这个链接已经收到一次位置，无法再次提交。',
   INVALID_LOCATION: '定位结果不完整或已超过五分钟，请重新获取位置。',

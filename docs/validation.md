@@ -5,7 +5,7 @@
 ## 正式部署
 
 - 正式网址：<https://location.pizzasend.dpdns.org>，版本 0.4.0。
-- Cloudflare Worker：`location-share`，部署版本 `4fcbcb5d-6b35-4fcc-9aa9-a1c8f749128b`（代码发布 `44b48360-0105-4dcd-92f0-73b3b98fdac2`，随后清理废弃配置）。
+- Cloudflare Worker：`location-share`，部署版本 `20616bed-4bb0-4293-9cc5-b96a0ab4071b`。已清理废弃创建口令配置，最终发布修正过期提示。
 - `workers.dev` 及预览网址关闭，网页与 API 同域。
 - 已核对 `signal.pizzasend.dpdns.org` 仍绑定 `pizza-send-signal`，location 子域名绑定 `location-share`。本次没有修改 PizzaSend 的配置。
 - Chrome 已打开正式页面，确认首页只有可选的发起人字段，没有创建口令、用途或有效期选择。
@@ -78,7 +78,7 @@
 
 - iPhone / Android 实机的定位权限、真实 GPS 精度、内置浏览器、扫码体验及地图 APP 调起。WebKit 自动测试通过不等于 iPhone 实机验证。
 - 大陆无 VPN、不同地区及电信/联通/移动网络对本站、OSM 和四个地图服务的可达性。当前机器网络成功不代表这些网络均成功。
-- 一小时后云端清理闹钟真实触发；过期访问立即删除活动记录已有状态测试，不承诺云平台备份同时永久擦除。
+- 一小时后云端清理闹钟真实触发；存储层清除过期活动记录已有状态测试，新签名过期直接在边缘拒绝，清理仍由闹钟执行。不承诺云平台备份同时永久擦除。
 - 全站每日额度耗尽和高并发负载。Cloudflare 边缘限流按节点计数，公开创建可被别人占用全站创建额度。
 
 ## 预览
