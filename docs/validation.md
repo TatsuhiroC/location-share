@@ -2,6 +2,32 @@
 
 验证日期：2026-10-14（Asia/Shanghai）。
 
+## 正式部署
+
+- 正式网址：<https://location.pizzasend.dpdns.org>。
+- Cloudflare Worker：`location-share`，版本 `31dde05f-6753-44e0-90e0-e57c90e4e9cf`。
+- `workers.dev` 及预览网址关闭；网页和 `/api/` 通过同一自定义域名提供。
+- 部署后核对：`signal.pizzasend.dpdns.org` 仍绑定 `pizza-send-signal`；新 location 子域名绑定 `location-share`。数据库及限流绑定独立。
+- 生产创建口令为单独生成的随机凭据，仅把摘要存入 Cloudflare Secret，不使用公开的测试口令，不提交私有管理入口到 GitHub。
+- GitHub 实现提交 `3db93cc` 的自动检查已通过，包含语法检查、9 项状态测试、18 项 Chromium/WebKit 测试和部署打包。
+
+## 公网接口验证
+
+在当前机器网络上使用模拟坐标 `(0, 0)` 验证，没有采集真人位置：
+
+| 检查 | 实际结果 |
+| --- | --- |
+| HTTPS 健康检查 | 200，版本 0.2.0 |
+| 无管理权限创建 | 401 |
+| 管理权限创建 | 201 |
+| 分享权限提交模拟位置 | 200 |
+| 查看权限读取位置 | 200，坐标与精度一致 |
+| 分享权限尝试读取位置 | 401 |
+| 查看权限删除验证记录 | 200 |
+| 删除后再次读取 | 404 |
+
+Chrome 已直接打开正式 HTTPS 页面，确认前端正常渲染。测试记录已清理。当前网络验证不等于大陆无 VPN 或三大运营商的实机可达性验证。
+
 ## 已通过
 
 - JavaScript 语法检查。
